@@ -1,0 +1,198 @@
+# ===================================
+# ELIXIR / PHOENIX
+# ===================================
+
+# The directory Mix will write compiled artifacts to.
+/_build/
+
+# If you run "mix test --cover", coverage assets end up here.
+/cover/
+
+# The directory Mix downloads your dependencies sources to.
+/deps/
+
+# Where 3rd-party dependencies like ExDoc output generated docs.
+/doc/
+
+# Ignore .fetch files in case you like to edit your project deps locally.
+/.fetch
+
+# If the VM crashes, it generates a dump, let's ignore it too.
+erl_crash.dump
+
+# Also ignore archive artifacts (built via "mix archive.build").
+*.ez
+
+# Temporary files, for example, from tests.
+/tmp/
+
+# Ignore package tarball (built via "mix hex.build").
+phx_new_cache-*.tar
+
+# Ignore assets that are produced by build tools.
+/priv/static/assets/
+
+# Ignore digested assets cache.
+/priv/static/cache_manifest.json
+
+# ===================================
+# DATABASES
+# ===================================
+
+# SQLite databases
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# PostgreSQL
+*.sql
+
+# Database backups
+*.backup
+*.bak
+
+# ===================================
+# ENVIRONMENT & SECRETS
+# ===================================
+
+# Environment variables
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Secret configuration files
+/config/prod.secret.exs
+/config/runtime.secret.exs
+
+# ===================================
+# NODE.js / NPM
+# ===================================
+
+# Dependencies
+/assets/node_modules/
+node_modules/
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Package locks (keep yarn.lock or package-lock.json, not both)
+# package-lock.json
+# yarn.lock
+
+# ===================================
+# CLAUDE CODE & AI TOOLS
+# ===================================
+
+# Claude Code files
+CLAUDE.md
+.claude/
+claude-*
+.claude-*
+
+# Project planning files
+plan.md
+
+# Other AI tools
+.cursor/
+.aider*
+.codeium/
+.copilot/
+
+# ===================================
+# EDITORS & IDEs
+# ===================================
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+
+# Sublime Text
+*.sublime-workspace
+*.sublime-project
+
+# ===================================
+# OS FILES
+# ===================================
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+
+# ===================================
+# LOGS & DEBUGGING
+# ===================================
+
+# Log files
+*.log
+logs/
+log/
+
+# Debug files
+*.debug
+
+# Core dumps
+core.*
+
+# ===================================
+# TEMPORARY & CACHE FILES
+# ===================================
+
+# Temporary files
+/tmp/
+*.tmp
+*.temp
+
+# Cache directories
+.cache/
+.parcel-cache/
+
+# ===================================
+# DEPLOYMENT & DOCKER
+# ===================================
+
+# Docker
+.dockerignore
+docker-compose.override.yml
+
+# Fly.io
+.fly/
+
+# Deployment artifacts
+release/
+deploy/
+
