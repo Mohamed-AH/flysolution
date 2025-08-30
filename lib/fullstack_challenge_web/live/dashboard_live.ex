@@ -1,5 +1,6 @@
 defmodule FullstackChallengeWeb.DashboardLive do
   use FullstackChallengeWeb, :live_view
+  alias FullstackChallenge.FlyMetrics
 
   require Logger
 
@@ -105,20 +106,28 @@ defmodule FullstackChallengeWeb.DashboardLive do
   end
 
 
-  defp load_apps(socket) do
-    case list_apps(socket.assigns.fly_token) do
-      {:ok, apps} ->
-        socket
-        |> assign(:apps, apps)
-        |> assign(:loading, false)
-        |> assign(:error, nil)
+defp load_apps(socket) do
+  case list_apps(socket.assigns.fly_token) do
+    {:ok, apps} ->
+      app_metrics =
+        apps
+        |> Enum.map(fn app ->
+          {app.name, FlyMetrics.fetch_for_app(app.name)}
+        end)
+        |> Enum.into(%{})
 
-      {:error, reason} ->
-        socket
-        |> assign(:loading, false)
-        |> assign(:error, "Failed to load apps: #{reason}")
-    end
+      socket
+      |> assign(:apps, apps)
+      |> assign(:app_metrics, app_metrics)
+      |> assign(:loading, false)
+      |> assign(:error, nil)
+    {:error, reason} ->
+      socket
+      |> assign(:loading, false)
+      |> assign(:error, "Failed to load apps: #{reason}")
   end
+end
+
 
   defp list_apps(token) do
     if not valid_token_format?(token) do

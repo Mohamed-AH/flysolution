@@ -20,7 +20,6 @@ defmodule FullstackChallengeWeb.Router do
     live "/", AuthLive
     live "/auth", AuthLive
     live "/dashboard", DashboardLive
-    live "/chat", ChatLive
     
     get "/auth/complete", AuthController, :complete
     get "/auth/logout", AuthController, :logout

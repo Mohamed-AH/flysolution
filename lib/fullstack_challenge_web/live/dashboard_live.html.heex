@@ -8,12 +8,6 @@
             <h1 class="text-xl font-semibold text-gray-900">Fly.io Dashboard</h1>
           </div>
           <div class="flex items-center space-x-4">
-            <a
-              href={~p"/chat"}
-              class="bg-blue-100 text-blue-700 px-3 py-1 rounded-md text-sm hover:bg-blue-200 transition-colors mr-2"
-            >
-              Incident Chat
-            </a>
             <button
               phx-click="load_apps"
               class="bg-gray-100 text-gray-700 px-3 py-1 rounded-md text-sm hover:bg-gray-200 transition-colors"
@@ -134,6 +128,62 @@
                       </button>
                     </td>
                   </tr>
+<tr>
+  <td colspan="100%">
+    <div class="p-4 bg-white border border-gray-200 rounded-lg mb-6 font-sans">
+      <h4 class="font-semibold text-base text-gray-900 mb-2">Metrics</h4>
+      <div class="space-y-2">
+        <%= for {label, result} <- @app_metrics[app.name] do %>
+          <div>
+            <span class="text-gray-700 font-medium"><%= label %>:</span>
+            <%= case result do %>
+              <% {:ok, []} -> %>
+                <span class="text-gray-400 ml-2 italic">No metrics available</span>
+              <% {:ok, data} -> %>
+                <ul class="ml-4 list-disc text-sm">
+                  <%= for metric <- data do %>
+                    <li>
+                      <%= if label == "HTTP Responses (by status)" and metric["metric"]["status"] do %>
+                        <span class="font-semibold text-indigo-700">
+                          Status <%= metric["metric"]["status"] %>:
+                        </span>
+                        <span class="text-gray-700">
+                          <%= case metric["metric"]["status"] do
+                            "200" -> "OK"
+                            "404" -> "Not found"
+                            "502" -> "Bad Gateway"
+                            "304" -> "Cache hit"
+                            code -> code
+                          end %>
+                        </span>
+                      <% end %>
+                      <%= if label == "Memory Usage (%)" and metric["value"] do %>
+                        <span class="font-semibold text-blue-700">Memory Used:</span>
+                        <span class="text-gray-900"><%= Float.round(String.to_float(Enum.at(metric["value"], 1)), 1) %>%</span>
+                      <% end %>
+                      <%= if label == "CPU Usage" and metric["value"] do %>
+                        <span class="font-semibold text-green-700">CPU Used:</span>
+                        <span class="text-gray-900"><%= Float.round(String.to_float(Enum.at(metric["value"], 1)), 2) %>%</span>
+                      <% end %>
+                      <%= if metric["value"] do %>
+                        <span class="text-gray-500 text-xs ml-2">
+                          (updated <%= Enum.at(metric["value"], 0) |> DateTime.from_unix!() |> Calendar.strftime("%b %d, %H:%M") %>)
+                        </span>
+                      <% end %>
+                    </li>
+                  <% end %>
+                </ul>
+              <% {:error, err} -> %>
+                <span class="text-red-400 ml-2"><%= err %></span>
+            <% end %>
+          </div>
+        <% end %>
+      </div>
+    </div>
+  </td>
+</tr>
+
+
                 <% end %>
               </tbody>
             </table>
