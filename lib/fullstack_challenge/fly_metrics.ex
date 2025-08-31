@@ -13,7 +13,7 @@ defmodule FullstackChallenge.FlyMetrics do
     {"CPU Usage", "sum(rate(fly_instance_cpu{app=\"%{app}\",mode!=\"idle\"}[5m]))"}
   ]
 
-  def fetch_for_app(app_name) do
+  def fetch_for_app(app_name) do 
     Enum.map(@metrics, fn {label, query_template} ->
       query = String.replace(query_template, "%{app}", app_name)
       {label, fetch_metric(query)}
@@ -23,14 +23,15 @@ defmodule FullstackChallenge.FlyMetrics do
   defp fetch_metric(query) do
     url = "#{@endpoint}/#{@org_slug}/api/v1/query"
     headers = 
-  if String.starts_with?(@token, "FlyV1 fm2_") do
-    [{"authorization", @token}]
-  else
-    [{"authorization", "Bearer #{@token}"}]
-  end
+      if String.starts_with?(@token, "FlyV1 fm2_") do
+        [{"authorization", @token}]
+      else
+        [{"authorization", "Bearer #{@token}"}]
+      end
 
     params = URI.encode_query(%{"query" => query})
     full_url = "#{url}?#{params}"
+    
     case Req.post(full_url, headers: headers, receive_timeout: @timeout) do
       {:ok, %{status: 200, body: %{"status" => "success", "data" => %{"result" => result}}}} -> {:ok, result}
       {:ok, %{body: %{"error" => reason}}} -> {:error, reason}
