@@ -1,0 +1,269 @@
+<Layouts.app flash={@flash}>
+  <div class="min-h-screen bg-gray-50">
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200">
+      <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div class="flex justify-between items-center h-16">
+          <div class="flex items-center">
+            <h1 class="text-xl font-semibold text-gray-900">Fly.io Dashboard</h1>
+          </div>
+          <div class="flex items-center space-x-4">
+            <button
+              phx-click="load_apps"
+              class="bg-gray-100 text-gray-700 px-3 py-1 rounded-md text-sm hover:bg-gray-200 transition-colors"
+            >
+              Refresh
+            </button>
+            <%= unless @is_env_token do %>
+              <a
+                href={~p"/auth/logout"}
+                class="bg-red-100 text-red-700 px-3 py-1 rounded-md text-sm hover:bg-red-200 transition-colors"
+              >
+                Logout
+              </a>
+            <% end %>
+          </div>
+        </div>
+      </div>
+    </header>
+
+<!-- Main Content -->
+    <main class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <%= if @loading do %>
+        <div class="flex justify-center items-center py-12">
+          <.icon name="hero-arrow-path" class="h-8 w-8 animate-spin text-blue-600" />
+          <span class="ml-2 text-gray-600">Loading apps...</span>
+        </div>
+      <% else %>
+        <%= if @error do %>
+          <div class="rounded-md bg-red-50 p-4 mb-6">
+            <div class="flex">
+              <.icon name="hero-x-circle" class="h-5 w-5 text-red-400" />
+              <div class="ml-3">
+                <h3 class="text-sm font-medium text-red-800">Error</h3>
+                <div class="mt-2 text-sm text-red-700">
+                  <p>{@error}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        <% end %>
+
+<!-- Actions -->
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-xl font-semibold text-gray-900">Apps</h2>
+          <button
+            phx-click="show_launch_modal"
+            class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors font-medium"
+          >
+            + Launch New App
+          </button>
+        </div>
+
+<!-- Apps Table -->
+        <div class="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <%= if @apps == [] do %>
+            <div class="px-6 py-12 text-center">
+              <.icon name="hero-server" class="h-12 w-12 text-gray-400 mx-auto mb-4" />
+              <h3 class="text-lg font-medium text-gray-900 mb-2">No apps found</h3>
+              <p class="text-gray-500 mb-6">Get started by launching your first app.</p>
+              <button
+                phx-click="show_launch_modal"
+                class="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition-colors font-medium"
+              >
+                Launch Your First App
+              </button>
+            </div>
+          <% else %>
+            <table class="min-w-full divide-y divide-gray-200">
+              <thead class="bg-gray-50">
+                <tr>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Name
+                  </th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Region
+                  </th>
+                  <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Created
+                  </th>
+                  <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody class="bg-white divide-y divide-gray-200">
+                <%= for app <- @apps do %>
+                  <tr>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {app.name}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                      <span class={[
+                        "inline-flex px-2 py-1 text-xs font-semibold rounded-full",
+                        if(app.status == "running",
+                          do: "bg-green-100 text-green-800",
+                          else: "bg-gray-100 text-gray-800"
+                        )
+                      ]}>
+                        {String.capitalize(app.status)}
+                      </span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {app.region}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {app.created_at}
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <button
+                        phx-click="show_destroy_modal"
+                        phx-value-app={app.name}
+                        class="text-red-600 hover:text-red-900 transition-colors"
+                      >
+                        Destroy
+                      </button>
+                    </td>
+                  </tr>
+<tr>
+  <td colspan="100%">
+    <div class="p-4 bg-white border border-gray-200 rounded-lg mb-6 font-sans">
+      <h4 class="font-semibold text-base text-gray-900 mb-2">Metrics</h4>
+      <div class="space-y-2">
+        <%= for {label, result} <- @app_metrics[app.name] do %>
+          <div>
+            <span class="text-gray-700 font-medium"><%= label %>:</span>
+            <%= case result do %>
+              <% {:ok, []} -> %>
+                <span class="text-gray-400 ml-2 italic">No metrics available</span>
+              <% {:ok, data} -> %>
+                <ul class="ml-4 list-disc text-sm">
+                  <%= for metric <- data do %>
+                    <li>
+                      <%= if label == "HTTP Responses (by status)" and metric["metric"]["status"] do %>
+                        <span class="font-semibold text-indigo-700">
+                          Status <%= metric["metric"]["status"] %>:
+                        </span>
+                        <span class="text-gray-700">
+                          <%= case metric["metric"]["status"] do
+                            "200" -> "OK"
+                            "404" -> "Not found"
+                            "502" -> "Bad Gateway"
+                            "304" -> "Cache hit"
+                            code -> code
+                          end %>
+                        </span>
+                      <% end %>
+                      <%= if label == "Memory Usage (%)" and metric["value"] do %>
+                        <span class="font-semibold text-blue-700">Memory Used:</span>
+                        <span class="text-gray-900"><%= Float.round(String.to_float(Enum.at(metric["value"], 1)), 1) %>%</span>
+                      <% end %>
+                      <%= if label == "CPU Usage" and metric["value"] do %>
+                        <span class="font-semibold text-green-700">CPU Used:</span>
+                        <span class="text-gray-900"><%= Float.round(String.to_float(Enum.at(metric["value"], 1)), 2) %>%</span>
+                      <% end %>
+                      <%= if metric["value"] do %>
+                        <span class="text-gray-500 text-xs ml-2">
+                          (updated <%= Enum.at(metric["value"], 0) |> DateTime.from_unix!() |> Calendar.strftime("%b %d, %H:%M") %>)
+                        </span>
+                      <% end %>
+                    </li>
+                  <% end %>
+                </ul>
+              <% {:error, err} -> %>
+                <span class="text-red-400 ml-2"><%= err %></span>
+            <% end %>
+          </div>
+        <% end %>
+      </div>
+    </div>
+  </td>
+</tr>
+
+
+                <% end %>
+              </tbody>
+            </table>
+          <% end %>
+        </div>
+      <% end %>
+    </main>
+  </div>
+
+<!-- Launch Modal -->
+  <%= if @show_launch_modal do %>
+    <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+      <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div class="mt-3">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Launch New App</h3>
+          <.form
+            for={@launch_form}
+            id="launch-form"
+            phx-change="validate_launch"
+            phx-submit="launch_app"
+          >
+            <div class="mb-4">
+              <label for="name" class="block text-sm font-medium text-gray-700 mb-2">
+                App Name
+              </label>
+              <.input
+                field={@launch_form[:name]}
+                type="text"
+                placeholder="my-awesome-app"
+                class="w-full px-3 py-2 border border-gray-300 rounded-md text-gray-900 placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                error_class="border-red-400 focus:border-red-500 focus:ring-red-200"
+              />
+            </div>
+            <div class="flex justify-end space-x-3">
+              <button
+                type="button"
+                phx-click="hide_launch_modal"
+                class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                class="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+              >
+                Launch App
+              </button>
+            </div>
+          </.form>
+        </div>
+      </div>
+    </div>
+  <% end %>
+
+<!-- Destroy Modal -->
+  <%= if @show_destroy_modal do %>
+    <div class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+      <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+        <div class="mt-3">
+          <h3 class="text-lg font-medium text-gray-900 mb-4">Destroy App</h3>
+          <p class="text-sm text-gray-600 mb-6">
+            Are you sure you want to destroy "<span class="font-semibold">{@destroy_app}</span>"? This action cannot be undone.
+          </p>
+          <div class="flex justify-end space-x-3">
+            <button
+              type="button"
+              phx-click="hide_destroy_modal"
+              class="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+            >
+              Cancel
+            </button>
+            <button
+              phx-click="destroy_app"
+              class="px-4 py-2 text-sm font-medium text-white bg-red-600 border border-transparent rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500"
+            >
+              Destroy App
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  <% end %>
+</Layouts.app>
