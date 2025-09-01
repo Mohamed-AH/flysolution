@@ -596,9 +596,9 @@ end
   defp app_icon("api"), do: "⚡"
   defp app_icon("worker"), do: "⚙️"
   defp app_icon(_), do: "#"
-  defp app_status_icon("healthy"), do: "🟢"
-  defp app_status_icon("warning"), do: "🟡"
-  defp app_status_icon("error"), do: "🔴"
+  defp app_status_icon("deployed"), do: "🟢"
+  defp app_status_icon("pending"), do: "🟡"
+  defp app_status_icon("suspended"), do: "🔴"
   defp app_status_icon(_), do: "⚪"
 defp timestamp_now do
   t = Time.utc_now()
