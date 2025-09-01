@@ -1,53 +1,73 @@
 defmodule FullstackChallengeWeb.DashboardLive do
   use FullstackChallengeWeb, :live_view
   alias FullstackChallenge.FlyMetrics
-
   require Logger
 
   def mount(_params, session, socket) do
     fly_token = get_token_from_session(session)
-    
     env_token = FullstackChallenge.EnvConfig.get_fly_token()
     is_env_token = env_token && fly_token && env_token == fly_token
+
+    # Discord-style chat demo apps/messages (leave as demo, or map from @apps for real Fly.io data!)
+    discord_demo_apps = [
+      %{id: "web-app-prod", name: "phoenix-web-app", status: "healthy", type: "web"},
+      %{id: "api-backend", name: "elixir-api", status: "warning", type: "api"},
+      %{id: "worker-service", name: "genserver-workers", status: "error", type: "worker"}
+    ]
+    discord_demo_messages = %{
+      "web-app-prod" => [
+        %{type: :ai, content: "Hi! I'm your monitoring assistant for **Phoenix Web App**. Everything looks healthy! 🟢", timestamp: timestamp_now()}
+      ],
+      "api-backend" => [
+        %{type: :ai, content: "⚠️ **Performance Alert**\n\nYour Elixir API is showing elevated response times.", timestamp: timestamp_now()}
+      ],
+      "worker-service" => [
+        %{type: :ai, content: "🔴 **Critical Alert**\n\nGenServer Workers are crashing frequently.", timestamp: timestamp_now()}
+      ]
+    }
 
     if fly_token do
       {:ok,
        socket
        |> assign(:fly_token, fly_token)
        |> assign(:is_env_token, is_env_token)
-       |> assign(:apps, [])
+       |> assign(:apps, [])                      
        |> assign(:loading, true)
        |> assign(:error, nil)
        |> assign(:show_launch_modal, false)
        |> assign(:show_destroy_modal, false)
        |> assign(:destroy_app, nil)
        |> assign(:launch_form, to_form(%{"name" => ""}, as: :launch))
+       |> assign(:discord_apps, discord_demo_apps)
+       |> assign(:selected_app, "web-app-prod")
+       |> assign(:messages, discord_demo_messages)
+       |> assign(:typing_message, "")
+       |> assign(:is_typing, false)
        |> load_apps()}
     else
       {:ok, push_navigate(socket, to: ~p"/auth")}
     end
   end
 
+  #########################
+  #   FLY.IO APP EVENTS   #
+  #########################
   def handle_event("load_apps", _, socket) do
     {:noreply, socket |> assign(:loading, true) |> load_apps()}
   end
-
   def handle_event("show_launch_modal", _, socket) do
     {:noreply,
      socket
      |> assign(:show_launch_modal, true)
      |> assign(:launch_form, to_form(%{"name" => ""}, as: :launch))}
   end
-
   def handle_event("hide_launch_modal", _, socket) do
     {:noreply, assign(socket, :show_launch_modal, false)}
   end
-
   def handle_event("validate_launch", %{"launch" => params}, socket) do
     form = to_form(params, as: :launch)
     {:noreply, assign(socket, :launch_form, form)}
   end
-
   def handle_event("launch_app", %{"launch" => %{"name" => name}}, socket) do
     case launch_app(socket.assigns.fly_token, name) do
       {:ok, _result} ->
@@ -56,47 +76,38 @@ defmodule FullstackChallengeWeb.DashboardLive do
          |> assign(:show_launch_modal, false)
          |> put_flash(:info, "App '#{name}' launched successfully!")
          |> load_apps()}
-
       {:error, reason} ->
         {:noreply,
          socket
          |> put_flash(:error, "Failed to launch app: #{reason}")}
     end
   end
-
   def handle_event("show_destroy_modal", %{"app" => app_name}, socket) do
     {:noreply,
      socket
      |> assign(:show_destroy_modal, true)
      |> assign(:destroy_app, app_name)}
   end
-
   def handle_event("hide_destroy_modal", _, socket) do
     {:noreply,
      socket
      |> assign(:show_destroy_modal, false)
      |> assign(:destroy_app, nil)}
   end
-
-
   def handle_event("destroy_app", _, socket) do
     app_name = socket.assigns.destroy_app
     Logger.info("Starting destroy for app: #{app_name}")
-
     case destroy_app(socket.assigns.fly_token, app_name) do
       {:ok, _result} ->
         Logger.info("App #{app_name} destroyed successfully")
-
         {:noreply,
          socket
          |> assign(:show_destroy_modal, false)
          |> assign(:destroy_app, nil)
          |> put_flash(:info, "App '#{app_name}' destroyed successfully!")
          |> load_apps()}
-
       {:error, reason} ->
         Logger.warning("Failed to destroy app #{app_name}: #{reason}")
-
         {:noreply,
          socket
          |> assign(:show_destroy_modal, false)
@@ -105,40 +116,94 @@ defmodule FullstackChallengeWeb.DashboardLive do
     end
   end
 
-
-defp load_apps(socket) do
-  case list_apps(socket.assigns.fly_token) do
-    {:ok, apps} ->
-      app_metrics =
-        apps
-        |> Enum.map(fn app ->
-          {app.name, FlyMetrics.fetch_for_app(app.name)}
-        end)
-        |> Enum.into(%{})
-
-      socket
-      |> assign(:apps, apps)
-      |> assign(:app_metrics, app_metrics)
-      |> assign(:loading, false)
-      |> assign(:error, nil)
-    {:error, reason} ->
-      socket
-      |> assign(:loading, false)
-      |> assign(:error, "Failed to load apps: #{reason}")
+  #########################################
+  #  DISCORD-STYLE SIDEBAR/CHAT HANDLERS  #
+  #########################################
+  def handle_event("select_app", %{"app" => app_id}, socket) do
+    {:noreply, assign(socket, selected_app: app_id)}
   end
-end
+  def handle_event("update_typing", %{"typing_message" => val}, socket) do
+    {:noreply, assign(socket, typing_message: val)}
+  end
+  def handle_event("send_message", _params, socket) do
+    app = socket.assigns.selected_app
+    msg = (socket.assigns.typing_message || "") |> String.trim()
+    if msg == "" do
+      {:noreply, socket}
+    else
+      user_msg = %{
+        type: :user,
+        content: msg,
+        timestamp: timestamp_now()
+      }
+      updated_messages = Map.update(socket.assigns.messages, app, [user_msg], &(&1 ++ [user_msg]))
+      socket =
+        socket
+        |> assign(messages: updated_messages, typing_message: "", is_typing: true)
+      Process.send_after(self(), {:bot_reply, msg, app}, 1200)
+      {:noreply, socket}
+    end
+  end
+  def handle_info({:bot_reply, user_msg, app}, socket) do
+    ai_msg = %{
+      type: :ai,
+      content: generate_bot_reply(user_msg, app, socket),
+      timestamp: timestamp_now()
+    }
+    updated_messages = Map.update(socket.assigns.messages, app, [ai_msg], &(&1 ++ [ai_msg]))
+    {:noreply, assign(socket, messages: updated_messages, is_typing: false)}
+  end
 
+  defp generate_bot_reply(user_msg, app, socket) do
+    msg = String.downcase(user_msg)
+    cond do
+      msg =~ "health" ->
+        app_struct = Enum.find(socket.assigns.discord_apps, &(&1.id == app))
+        icon = app_status_icon(app_struct.status)
+        "Health check for **#{app_struct.name}** #{icon} – All systems up!"
+      msg =~ "error" or msg =~ "errors" ->
+        if app == "worker-service" do
+          "🔴 **Critical Error:** Worker process failure detected!\n\nCheck logs!"
+        else
+          "✅ No current critical errors."
+        end
+      msg =~ "slow" or msg =~ "performance" ->
+        "📊 Current response time for #{app}: *randomly* fine!"
+      true ->
+        "Hey! I’m monitoring **#{app}**. Try commands like `health`, `error`, `slow`."
+    end
+  end
 
+  #########################
+  #     FLY.IO HELPERS    #
+  #########################
+  defp load_apps(socket) do
+    case list_apps(socket.assigns.fly_token) do
+      {:ok, apps} ->
+        app_metrics =
+          apps
+          |> Enum.map(fn app ->
+            {app.name, FlyMetrics.fetch_for_app(app.name)}
+          end)
+          |> Enum.into(%{})
+        socket
+        |> assign(:apps, apps)
+        |> assign(:app_metrics, app_metrics)
+        |> assign(:loading, false)
+        |> assign(:error, nil)
+      {:error, reason} ->
+        socket
+        |> assign(:loading, false)
+        |> assign(:error, "Failed to load apps: #{reason}")
+    end
+  end
   defp list_apps(token) do
     if not valid_token_format?(token) do
       Logger.warning("Invalid token format: #{String.slice(token, 0, 8)}...")
       {:error, "Invalid token format"}
     end
-
     headers = [{"Authorization", "Bearer #{token}"}]
-
     Logger.info("Calling Fly.io GraphQL API to list apps...")
-
     case Req.post("https://api.fly.io/graphql",
            headers: headers,
            form: [query: "{ apps { nodes { id name status organization { slug } createdAt } } }"]
@@ -148,24 +213,19 @@ end
         apps = parse_apps_response(body)
         Logger.info("Parsed apps: #{inspect(apps)}")
         {:ok, apps}
-
       {:ok, %{status: 401}} ->
         Logger.warning("Fly.io API returned 401 Unauthorized")
         {:error, "Invalid token"}
-
       {:ok, %{status: status, body: body}} ->
         Logger.warning("Fly.io API returned status #{status} with body: #{inspect(body)}")
         {:error, "API error (#{status})"}
-
       {:error, reason} ->
         Logger.error("Network error calling Fly.io API: #{inspect(reason)}")
         {:error, "Network error"}
     end
   end
-
   defp launch_app(token, name) do
     Logger.info("Attempting to launch app: #{name}")
-
     case get_user_organization(token) do
       {:ok, org_id} ->
         case create_app(token, name, org_id) do
@@ -176,29 +236,23 @@ end
                   {:ok, _machine_data} ->
                     Logger.info("Successfully launched app: #{name}")
                     {:ok, %{}}
-                  
                   {:error, reason} ->
                     Logger.warning("App created but deployment failed: #{reason}")
                     {:error, "App created but deployment failed: #{reason}"}
                 end
-              
               {:error, reason} ->
                 Logger.warning("App created but IP allocation failed: #{reason}")
                 {:error, "App created but IP allocation failed: #{reason}"}
             end
-          
           {:error, reason} ->
             {:error, reason}
         end
-
       {:error, reason} ->
         {:error, "Failed to get organization: #{reason}"}
     end
   end
-
   defp create_app(token, name, org_id) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
-    
     mutation = %{
       query: """
         mutation($input: CreateAppInput!) {
@@ -217,7 +271,6 @@ end
         }
       }
     }
-
     case Req.post("https://api.fly.io/graphql",
            headers: headers,
            body: Jason.encode!(mutation)
@@ -225,28 +278,22 @@ end
       {:ok, %{status: 200, body: %{"data" => %{"createApp" => data}}}} when not is_nil(data) ->
         Logger.info("Created app: #{inspect(data)}")
         {:ok, data}
-
       {:ok, %{status: 200, body: %{"errors" => errors}}} ->
         Logger.warning("GraphQL errors creating app: #{inspect(errors)}")
         error_msg = get_in(errors, [Access.at(0), "message"]) || "GraphQL error"
         {:error, error_msg}
-
       {:ok, %{status: 401}} ->
         {:error, "Invalid token"}
-
       {:ok, %{status: status, body: body}} ->
         Logger.warning("Fly.io API returned status #{status} with body: #{inspect(body)}")
         {:error, "API error (#{status})"}
-
       {:error, reason} ->
         Logger.error("Network error creating app: #{inspect(reason)}")
         {:error, "Network error"}
     end
   end
-
   defp allocate_ip_addresses(token, app_name) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
-    
     ipv4_mutation = %{
       query: """
         mutation($input: AllocateIPAddressInput!) {
@@ -266,38 +313,30 @@ end
         }
       }
     }
-
     case Req.post("https://api.fly.io/graphql",
            headers: headers,
            body: Jason.encode!(ipv4_mutation)
          ) do
       {:ok, %{status: 200, body: %{"data" => %{"allocateIpAddress" => ipv4_data}}}} when not is_nil(ipv4_data) ->
         Logger.info("Allocated IPv4 for app #{app_name}: #{inspect(ipv4_data)}")
-        
         allocate_ipv6(token, app_name)
         {:ok, ipv4_data}
-
       {:ok, %{status: 200, body: %{"errors" => errors}}} ->
         Logger.warning("GraphQL errors allocating IP: #{inspect(errors)}")
         error_msg = get_in(errors, [Access.at(0), "message"]) || "IP allocation error"
         {:error, error_msg}
-
       {:ok, %{status: 401}} ->
         {:error, "Invalid token"}
-
       {:ok, %{status: status, body: body}} ->
         Logger.warning("IP allocation API returned status #{status} with body: #{inspect(body)}")
         {:error, "IP allocation failed (#{status})"}
-
       {:error, reason} ->
         Logger.error("Network error allocating IP: #{inspect(reason)}")
         {:error, "Network error"}
     end
   end
-
   defp allocate_ipv6(token, app_name) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
-    
     ipv6_mutation = %{
       query: """
         mutation($input: AllocateIPAddressInput!) {
@@ -317,7 +356,6 @@ end
         }
       }
     }
-
     case Req.post("https://api.fly.io/graphql",
            headers: headers,
            body: Jason.encode!(ipv6_mutation)
@@ -325,22 +363,17 @@ end
       {:ok, %{status: 200, body: %{"data" => %{"allocateIpAddress" => ipv6_data}}}} when not is_nil(ipv6_data) ->
         Logger.info("Allocated IPv6 for app #{app_name}: #{inspect(ipv6_data)}")
         {:ok, ipv6_data}
-
       {:ok, %{status: 200, body: %{"errors" => _errors}}} ->
         Logger.info("IPv6 allocation failed for app #{app_name}, continuing with IPv4 only")
         {:ok, nil}
-
       _ ->
         Logger.info("IPv6 allocation failed for app #{app_name}, continuing with IPv4 only")
         {:ok, nil}
     end
   end
-
   defp deploy_nginx_app(token, app_name) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
-    
     template = FullstackChallenge.AppTemplates.nginx_app_template(app_name)
-    
     machine_config = %{
       config: %{
         image: "nginx:alpine",
@@ -367,7 +400,7 @@ end
             raw_value: Base.encode64(template.index_html)
           },
           %{
-            guest_path: "/etc/nginx/nginx.conf", 
+            guest_path: "/etc/nginx/nginx.conf",
             raw_value: Base.encode64(template.nginx_conf)
           }
         ],
@@ -378,7 +411,6 @@ end
         }
       }
     }
-
     case Req.post("https://api.machines.dev/v1/apps/#{app_name}/machines",
            headers: headers,
            body: Jason.encode!(machine_config)
@@ -386,23 +418,18 @@ end
       {:ok, %{status: status, body: body}} when status in [200, 201] ->
         Logger.info("Deployed machine for app #{app_name}: #{inspect(body)}")
         {:ok, body}
-
       {:ok, %{status: 401}} ->
         {:error, "Invalid token"}
-
       {:ok, %{status: status, body: body}} ->
         Logger.warning("Machines API returned status #{status} with body: #{inspect(body)}")
         {:error, "Deployment failed (#{status})"}
-
       {:error, reason} ->
         Logger.error("Network error deploying app: #{inspect(reason)}")
         {:error, "Network error"}
     end
   end
-
   defp get_user_organization(token) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
-    
     query = %{
       query: """
         {
@@ -417,7 +444,6 @@ end
         }
       """
     }
-
     case Req.post("https://api.fly.io/graphql",
            headers: headers,
            body: Jason.encode!(query)
@@ -425,28 +451,22 @@ end
       {:ok, %{status: 200, body: %{"data" => %{"viewer" => %{"organizations" => %{"nodes" => [_ | _] = orgs}}}}}} ->
         org_id = get_in(orgs, [Access.at(0), "id"])
         {:ok, org_id}
-
       {:ok, %{status: 200, body: %{"errors" => errors}}} ->
         Logger.warning("GraphQL errors getting organization: #{inspect(errors)}")
         {:error, "Failed to get organization"}
-
       {:ok, %{status: status, body: body}} ->
         Logger.warning("Failed to get organization, status #{status}: #{inspect(body)}")
         {:error, "API error"}
-
       {:error, reason} ->
         Logger.error("Network error getting organization: #{inspect(reason)}")
         {:error, "Network error"}
     end
   end
-
   defp destroy_app(token, app_name) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
-
     Logger.info(
       "Attempting to destroy app: #{app_name} with token: #{String.slice(token, 0, 8)}..."
     )
-
     mutation = %{
       query: """
         mutation($appId: ID!) {
@@ -461,7 +481,6 @@ end
         appId: app_name
       }
     }
-
     case Req.post("https://api.fly.io/graphql",
            headers: headers,
            body: Jason.encode!(mutation)
@@ -469,52 +488,46 @@ end
       {:ok, %{status: 200, body: %{"data" => %{"deleteApp" => data}}}} when not is_nil(data) ->
         Logger.info("Destroy app API response (data): #{inspect(data)}")
         {:ok, %{}}
-
       {:ok, %{status: 200, body: %{"errors" => errors}}} ->
         Logger.warning("GraphQL errors in destroy app: #{inspect(errors)}")
         error_msg = get_in(errors, [Access.at(0), "message"]) || "GraphQL error"
         {:error, error_msg}
-
       {:ok, %{status: 401, body: body}} ->
         Logger.warning("Destroy app unauthorized: #{inspect(body)}")
         {:error, "Invalid token"}
-
       {:ok, %{status: 404, body: body}} ->
         Logger.warning("Destroy app not found: #{inspect(body)}")
         {:error, "App not found"}
-
       {:ok, %{status: status, body: body}} ->
         Logger.warning("Fly.io API returned status #{status} with body: #{inspect(body)}")
         {:error, "API error (#{status})"}
-
       {:error, reason} ->
         Logger.error("Network error destroying app: #{inspect(reason)}")
         {:error, "Network error"}
     end
   end
+defp parse_apps_response(%{"errors" => errors}) when is_list(errors) do
+  Logger.warning("GraphQL errors in parse_apps_response: #{inspect(errors)}")
+  []
+end
+defp parse_apps_response(%{"data" => %{"apps" => %{"nodes" => apps}}}) when is_list(apps) do
+  Enum.map(apps, fn app ->
+    %{
+      id: Map.get(app, "id", Map.get(app, "name", "unknown")),
+      name: Map.get(app, "name", "unknown"),
+      status: Map.get(app, "status", "running"),
+      region: Map.get(app["organization"], "slug", "unknown"),
+      created_at: Map.get(app, "createdAt", "unknown"),
+      type: "web"    # <--- This line is NEW; set as needed ("web", "api", "worker", etc.)
+    }
+  end)
+end
 
-  defp parse_apps_response(%{"errors" => errors}) when is_list(errors) do
-    Logger.warning("GraphQL errors in parse_apps_response: #{inspect(errors)}")
-    []
-  end
-
-  defp parse_apps_response(%{"data" => %{"apps" => %{"nodes" => apps}}}) when is_list(apps) do
-    Enum.map(apps, fn app ->
-      %{
-        name: Map.get(app, "name", "unknown"),
-        status: Map.get(app, "status", "running"),
-        region: Map.get(app["organization"], "slug", "unknown"),
-        created_at: Map.get(app, "createdAt", "unknown")
-      }
-    end)
-  end
 
   defp valid_token_format?(token) when is_binary(token) do
     String.starts_with?(token, "FlyV1") and String.length(token) > 50
   end
-
   defp valid_token_format?(_), do: false
-  
   defp get_token_from_session(session) do
     case Map.get(session, "auth_token_ref") do
       ref when is_binary(ref) ->
@@ -526,12 +539,10 @@ end
             Logger.debug("Token retrieval failed: #{reason}")
             try_fallback_methods(session)
         end
-      
       nil ->
         try_fallback_methods(session)
     end
   end
-  
   defp try_fallback_methods(session) do
     case FullstackChallenge.TokenSecurity.decrypt_token(Map.get(session, "encrypted_fly_token")) do
       {:ok, token} -> 
@@ -545,8 +556,26 @@ end
         end
     end
   end
-  
   defp generate_session_id do
     :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
   end
+
+  #########################
+  #     UI HELPERS        #
+  #########################
+  defp app_icon("web"), do: "🌐"
+  defp app_icon("api"), do: "⚡"
+  defp app_icon("worker"), do: "⚙️"
+  defp app_icon(_), do: "#"
+  defp app_status_icon("healthy"), do: "🟢"
+  defp app_status_icon("warning"), do: "🟡"
+  defp app_status_icon("error"), do: "🔴"
+  defp app_status_icon(_), do: "⚪"
+defp timestamp_now do
+  t = Time.utc_now()
+  "#{pad2(t.hour)}:#{pad2(t.minute)}"
+end
+
+defp pad2(n) when is_integer(n), do: if(n < 10, do: "0#{n}", else: "#{n}")
+
 end
