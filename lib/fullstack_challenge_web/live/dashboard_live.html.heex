@@ -1,65 +1,140 @@
 <div class="flex h-screen bg-gray-800 text-white font-['Whitney','Helvetica','Arial',sans-serif]">
-  <!-- Server (apps) Sidebar -->
-  <div class="w-16 bg-gray-900 flex flex-col items-center py-3 space-y-2">
-    <%= for app <- @apps do %>
-      <div 
-        class={"w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-all duration-200 relative " <>
-        if(@selected_app == app.id, do: "bg-indigo-500 rounded-xl", else: "bg-gray-700 hover:bg-indigo-500 hover:rounded-xl")}
-        phx-click="select_app"
-        phx-value-app={app.id}
-      >
-        <span class="text-lg"><%= app_icon(app.type) %></span>
-        <div class={"absolute -right-1 -bottom-1 w-4 h-4 rounded-full border-2 border-gray-900 " <>
-        case app.status do
-          "healthy" -> "bg-green-500"
-          "warning" -> "bg-yellow-500"
-          "error" ->   "bg-red-500"
-          _ ->         "bg-gray-400"
-        end
-        }>
-        </div>
+<!-- Server (apps) Sidebar (icon only) -->
+<div class="w-16 bg-gray-900 flex flex-col items-center py-3 space-y-2">
+  <%= for app <- @apps do %>
+    <div 
+      class={"w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-all duration-200 relative " <>
+      if(@selected_app == app.id, do: "bg-indigo-500 rounded-xl", else: "bg-gray-700 hover:bg-indigo-500 hover:rounded-xl")}
+      phx-click="select_app"
+      phx-value-app={app.id}
+    >
+      <span class="text-lg"><%= app_icon(app.type) %></span>
+      <div class={"absolute -right-1 -bottom-1 w-4 h-4 rounded-full border-2 border-gray-900 " <>
+      case app.status do
+        "healthy" -> "bg-green-500"
+        "warning" -> "bg-yellow-500"
+        "error" ->   "bg-red-500"
+        _ ->         "bg-gray-400"
+      end
+      }>
       </div>
-    <% end %>
-  </div>
-  <!-- Channels Sidebar -->
-  <div class="w-60 bg-gray-700 flex flex-col min-h-0">
-    <div class="h-12 px-4 flex items-center border-b border-gray-600 shadow-md">
-      <h1 class="text-white font-semibold">Fly.io Production</h1>
     </div>
-    <div class="flex-1 pt-4 overflow-y-auto">
-      <div class="px-2 mb-2">
-        <div class="flex items-center px-2 text-gray-400 text-xs font-semibold uppercase tracking-wide">
-          <span class="mr-2">#</span> Applications
-        </div>
+  <% end %>
+</div>
+
+<!-- Channels Sidebar (with metrics) -->
+<div class="w-60 bg-gray-700 flex flex-col min-h-0">
+  <!-- Header -->
+  <div class="h-12 px-4 flex items-center border-b border-gray-600 shadow-md">
+    <h1 class="text-white font-semibold">Fly.io Production</h1>
+  </div>
+  <!-- Scrollable app/channel/metrics area -->
+  <div class="flex-1 pt-4 overflow-y-auto">
+    <!-- "Applications" Title -->
+    <div class="px-2 mb-2">
+      <div class="flex items-center px-2 text-gray-400 text-xs font-semibold uppercase tracking-wide">
+        <span class="mr-2">#</span> Applications
       </div>
-      <div class="space-y-0.5 px-2">
-        <%= for app <- @apps do %>
-          <div
-            class={"flex items-center px-2 py-1.5 rounded cursor-pointer group " <>
-              if(@selected_app == app.id, do: "bg-gray-600 text-white", else: "text-gray-300 hover:bg-gray-600 hover:text-white")}
-            phx-click="select_app"
-            phx-value-app={app.id}
-          >
-            <span class="mr-2">#</span>
-            <span class="text-sm font-medium"><%= app.name %></span>
-            <span class="ml-auto text-xs"><%= app_status_icon(app.status) %></span>
+    </div>
+    <!-- App channel list -->
+    <div class="space-y-0.5 px-2">
+      <%= for app <- @apps do %>
+        <div
+          class={"flex items-center px-2 py-1.5 rounded cursor-pointer group " <>
+            if(@selected_app == app.id, do: "bg-gray-600 text-white", else: "text-gray-300 hover:bg-gray-600 hover:text-white")}
+          phx-click="select_app"
+          phx-value-app={app.id}
+        >
+          <span class="mr-2">#</span>
+          <span class="text-sm font-medium"><%= app.name %></span>
+          <span class="ml-auto text-xs"><%= app_status_icon(app.status) %></span>
+        </div>
+      <% end %>
+    </div>
+
+<div>
+  <div>DEBUG: selected_app: <%= inspect(@selected_app) %></div>
+  <div>DEBUG: app ids: <%= inspect(Enum.map(@apps, & &1.id)) %></div>
+</div>
+
+
+    <!-- ================== -->
+    <!--  METRICS PANEL     -->
+    <!-- ================== -->
+    <%
+      current_metrics = @app_metrics[@selected_app] || []
+    %>
+    <div class="mt-6 mx-2 p-3 bg-gray-800 rounded shadow">
+      <div class="text-xs text-gray-400 mb-2 font-semibold">LIVE METRICS</div>
+      <div class="space-y-1 text-xs">
+        <%= for {label, result} <- current_metrics do %>
+          <div>
+            <span class="text-gray-400 font-medium"><%= label %>:</span>
+            <%= case result do %>
+              <% {:ok, []} -> %>
+                <span class="text-gray-500 ml-2 italic">No data</span>
+              <% {:ok, data} -> %>
+                <ul class="ml-2 list-disc list-inside">
+                  <%= for metric <- data do %>
+                    <%= if label == "Memory Usage (%)" and metric["value"] do %>
+                      <li>
+                        <span class="font-semibold text-blue-400">Memory:</span>
+                        <span class="text-white">
+                          <%= Float.round(String.to_float(Enum.at(metric["value"], 1)), 1) %>%
+                        </span>
+                      </li>
+                    <% end %>
+                    <%= if label == "CPU Usage" and metric["value"] do %>
+                      <li>
+                        <span class="font-semibold text-green-400">CPU:</span>
+                        <span class="text-white">
+                          <%= Float.round(String.to_float(Enum.at(metric["value"], 1)), 2) %>%
+                        </span>
+                      </li>
+                    <% end %>
+                    <%= if label == "HTTP Responses (by status)" and metric["metric"]["status"] do %>
+                      <li>
+                        <span class="font-semibold text-indigo-400">Status <%= metric["metric"]["status"] %>:</span>
+                        <span class="text-white">
+                          <%= case metric["metric"]["status"] do
+                            "200" -> "OK"
+                            "404" -> "Not Found"
+                            "502" -> "Bad Gateway"
+                            "304" -> "Cache Hit"
+                            code -> code
+                          end %>
+                        </span>
+                        <span class="ml-1 text-xs text-gray-400">
+                          <%= metric["value"] |> Enum.at(1) %>
+                        </span>
+                      </li>
+                    <% end %>
+                  <% end %>
+                </ul>
+              <% {:error, err} -> %>
+                <span class="text-red-400 ml-2"><%= err %></span>
+            <% end %>
           </div>
         <% end %>
       </div>
     </div>
-    <!-- User Area (bottom) -->
-    <div class="h-14 bg-gray-800 px-2 flex items-center">
-      <div class="flex items-center flex-1">
-        <div class="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center mr-2">
-          <span class="text-sm">👤</span>
-        </div>
-        <div class="flex-1 min-w-0">
-          <div class="text-sm font-medium text-white truncate">Developer</div>
-          <div class="text-xs text-gray-400">#1234</div>
-        </div>
+    <!-- END METRICS PANEL -->
+  </div>
+  <!-- User Area (bottom) -->
+  <div class="h-14 bg-gray-800 px-2 flex items-center">
+    <div class="flex items-center flex-1">
+      <div class="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center mr-2">
+        <span class="text-sm">👤</span>
+      </div>
+      <div class="flex-1 min-w-0">
+        <div class="text-sm font-medium text-white truncate">Developer</div>
+        <div class="text-xs text-gray-400">#1234</div>
       </div>
     </div>
   </div>
+</div>
+
+
   <!-- Main Content: Chat Area -->
   <div class="flex-1 flex flex-col">
     <!-- Get current app safely -->

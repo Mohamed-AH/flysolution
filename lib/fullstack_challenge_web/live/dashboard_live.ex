@@ -39,7 +39,7 @@ defmodule FullstackChallengeWeb.DashboardLive do
        |> assign(:destroy_app, nil)
        |> assign(:launch_form, to_form(%{"name" => ""}, as: :launch))
        |> assign(:discord_apps, discord_demo_apps)
-       |> assign(:selected_app, "web-app-prod")
+       |> assign(:selected_app, nil)
        |> assign(:messages, discord_demo_messages)
        |> assign(:typing_message, "")
        |> assign(:is_typing, false)
@@ -119,9 +119,26 @@ defmodule FullstackChallengeWeb.DashboardLive do
   #########################################
   #  DISCORD-STYLE SIDEBAR/CHAT HANDLERS  #
   #########################################
-  def handle_event("select_app", %{"app" => app_id}, socket) do
-    {:noreply, assign(socket, selected_app: app_id)}
-  end
+def handle_event("select_app", %{"app" => app_id}, socket) do
+  # Fetch fresh metrics for the selected app only
+  selected_app = app_id
+  apps = socket.assigns.apps
+  app = Enum.find(apps, &(&1.id == selected_app))
+
+  app_metrics =
+    Map.put(
+      socket.assigns.app_metrics || %{},
+      selected_app,
+      if(app, do: FullstackChallenge.FlyMetrics.fetch_for_app(app.name), else: [])
+    )
+
+  {:noreply,
+   socket
+   |> assign(:selected_app, selected_app)
+   |> assign(:app_metrics, app_metrics)}
+end
+
+
   def handle_event("update_typing", %{"typing_message" => val}, socket) do
     {:noreply, assign(socket, typing_message: val)}
   end
@@ -177,26 +194,38 @@ defmodule FullstackChallengeWeb.DashboardLive do
   #########################
   #     FLY.IO HELPERS    #
   #########################
-  defp load_apps(socket) do
-    case list_apps(socket.assigns.fly_token) do
-      {:ok, apps} ->
-        app_metrics =
-          apps
-          |> Enum.map(fn app ->
-            {app.name, FlyMetrics.fetch_for_app(app.name)}
-          end)
-          |> Enum.into(%{})
-        socket
-        |> assign(:apps, apps)
-        |> assign(:app_metrics, app_metrics)
-        |> assign(:loading, false)
-        |> assign(:error, nil)
-      {:error, reason} ->
-        socket
-        |> assign(:loading, false)
-        |> assign(:error, "Failed to load apps: #{reason}")
-    end
+defp load_apps(socket) do
+  case list_apps(socket.assigns.fly_token) do
+    {:ok, apps} ->
+      # force id to string for all apps in case
+      apps = Enum.map(apps, fn app -> %{app | id: to_string(app.id)} end)
+      app_metrics =
+        for app <- apps, into: %{} do
+          {app.id, FullstackChallenge.FlyMetrics.fetch_for_app(app.name)}
+        end
+      real_ids = Enum.map(apps, & &1.id)
+      selected_app =
+        if socket.assigns.selected_app in real_ids do
+          socket.assigns.selected_app
+        else
+          List.first(real_ids)
+        end
+
+      socket
+      |> assign(:apps, apps)
+      |> assign(:app_metrics, app_metrics)
+      |> assign(:selected_app, selected_app)
+      |> assign(:loading, false)
+      |> assign(:error, nil)
+    {:error, reason} ->
+      socket
+      |> assign(:loading, false)
+      |> assign(:error, "Failed to load apps: #{reason}")
   end
+end
+
+
+
   defp list_apps(token) do
     if not valid_token_format?(token) do
       Logger.warning("Invalid token format: #{String.slice(token, 0, 8)}...")
