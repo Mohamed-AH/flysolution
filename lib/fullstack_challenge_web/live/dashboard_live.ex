@@ -146,10 +146,23 @@ defmodule FullstackChallengeWeb.DashboardLive do
     {:noreply, assign(socket, typing_message: val)}
   end
 
-  def handle_event("send_message", _params, socket) do
-    app = socket.assigns.selected_app
-    msg = (socket.assigns.typing_message || "") |> String.trim()
-    if msg == "" do
+def handle_event("send_message", _params, socket) do
+  Logger.info("[Chat Debug] send_message event triggered!")
+  app_id = socket.assigns.selected_app
+  msg = (socket.assigns.typing_message || "") |> String.trim()
+  
+  Logger.info("[Chat Debug] Sending message: #{inspect(msg)} to app: #{inspect(app_id)}")
+  
+  if msg == "" or is_nil(app_id) do
+    Logger.info("[Chat Debug] Message empty or app not found, skipping AI call.")
+    {:noreply, socket}
+  else
+    # Find the actual app from either real apps or discord demo apps
+    app = Enum.find(socket.assigns.apps, &(&1.id == app_id)) || 
+          Enum.find(socket.assigns.discord_apps, &(&1.id == app_id))
+    
+    if is_nil(app) do
+      Logger.warning("[Chat Debug] No app found for ID: #{app_id}")
       {:noreply, socket}
     else
       user_msg = %{
@@ -157,14 +170,167 @@ defmodule FullstackChallengeWeb.DashboardLive do
         content: msg,
         timestamp: timestamp_now()
       }
-      updated_messages = Map.update(socket.assigns.messages, app, [user_msg], &(&1 ++ [user_msg]))
-      socket =
-        socket
-        |> assign(messages: updated_messages, typing_message: "", is_typing: true)
-      Process.send_after(self(), {:bot_reply, msg, app}, 1200)
+      
+      updated_messages = Map.update(socket.assigns.messages, app_id, [user_msg], &(&1 ++ [user_msg]))
+      socket = socket |> assign(messages: updated_messages, typing_message: "", is_typing: true)
+      
+      # Build comprehensive context for AI
+      app_context = build_app_context(app, socket.assigns.app_metrics[app_id], socket.assigns.logs[app_id])
+      
+      # Get conversation history
+      recent_messages = updated_messages[app_id] |> Enum.take(-6)
+      
+      self_pid = self()
+      
+      Task.start(fn ->
+        try do
+          Logger.info("[Chat Debug] Task started for AI reply with enhanced context")
+          ai_reply =
+            case openrouter_chat_api(app_context, recent_messages) do
+              {:ok, reply} -> reply
+              {:error, reason} -> 
+                Logger.error("[Chat Debug] OpenRouter API error: #{reason}")
+                "I'm having trouble connecting to my AI service right now. Error: #{reason}"
+            end
+          
+          ai_msg = %{
+            type: :ai,
+            content: ai_reply,
+            timestamp: timestamp_now()
+          }
+          
+          Logger.info("[Chat Debug] Sending bot_reply: #{inspect(ai_msg)}")
+          send(self_pid, {:bot_reply, ai_msg, app_id})
+        rescue
+          err -> 
+            Logger.error("[Chat Debug] AI Task error: #{inspect(err)}")
+            error_msg = %{
+              type: :ai,
+              content: "Sorry, I encountered an error while processing your request. Please try again.",
+              timestamp: timestamp_now()
+            }
+            send(self_pid, {:bot_reply, error_msg, app_id})
+        end
+      end)
+      
       {:noreply, socket}
     end
   end
+end
+
+# Build comprehensive app context for AI
+defp build_app_context(app, metrics, logs) do
+  # Format metrics data
+  metrics_summary = case metrics do
+    nil -> "No metrics available yet"
+    {:error, reason} -> "Metrics error: #{reason}"
+    metrics_list when is_list(metrics_list) ->
+      metrics_list
+      |> Enum.map(fn {label, result} ->
+        case result do
+          {:ok, []} -> "#{label}: No data available"
+          {:ok, data} -> format_metrics_data(label, data)
+          {:error, err} -> "#{label}: Error - #{err}"
+        end
+      end)
+      |> Enum.join(", ")
+    _ -> "Metrics loading or unavailable"
+  end
+  
+  # Format recent logs
+  logs_summary = case logs do
+    nil -> "No logs available"
+    [] -> "No recent logs"
+    log_entries when is_list(log_entries) ->
+      recent_logs = log_entries |> Enum.take(-5)
+      log_summary = recent_logs
+      |> Enum.map(fn log ->
+        "#{log.timestamp} [#{log.level}]: #{String.slice(log.message, 0, 100)}"
+      end)
+      |> Enum.join("\n")
+      
+      "Recent logs (last 5 entries):\n#{log_summary}"
+    _ -> "Logs unavailable"
+  end
+  
+  %{
+    app: app,
+    metrics: metrics_summary,
+    logs: logs_summary,
+    timestamp: timestamp_now()
+  }
+end
+
+# Format specific metrics data for AI context
+defp format_metrics_data("Memory Usage (%)", data) do
+  memory_values = data
+  |> Enum.map(fn metric ->
+    if metric["value"] && length(metric["value"]) >= 2 do
+      case Float.parse(Enum.at(metric["value"], 1)) do
+        {val, _} -> Float.round(val, 1)
+        :error -> nil
+      end
+    else
+      nil
+    end
+  end)
+  |> Enum.filter(&(&1 != nil))
+  
+  case memory_values do
+    [] -> "Memory Usage: No data"
+    values -> 
+      avg_memory = Enum.sum(values) / length(values)
+      "Memory Usage: #{Float.round(avg_memory, 1)}% (avg of #{length(values)} readings)"
+  end
+end
+
+defp format_metrics_data("CPU Usage", data) do
+  cpu_values = data
+  |> Enum.map(fn metric ->
+    if metric["value"] && length(metric["value"]) >= 2 do
+      case Float.parse(Enum.at(metric["value"], 1)) do
+        {val, _} -> Float.round(val, 2)
+        :error -> nil
+      end
+    else
+      nil
+    end
+  end)
+  |> Enum.filter(&(&1 != nil))
+  
+  case cpu_values do
+    [] -> "CPU Usage: No data"
+    values -> 
+      avg_cpu = Enum.sum(values) / length(values)
+      "CPU Usage: #{Float.round(avg_cpu, 2)}% (avg of #{length(values)} readings)"
+  end
+end
+
+defp format_metrics_data("HTTP Responses (by status)", data) do
+  status_counts = data
+  |> Enum.map(fn metric ->
+    status = get_in(metric, ["metric", "status"])
+    value = if metric["value"] && length(metric["value"]) >= 2 do
+      Enum.at(metric["value"], 1)
+    else
+      "0"
+    end
+    {status, value}
+  end)
+  |> Enum.filter(fn {status, _} -> status != nil end)
+  |> Enum.map(fn {status, value} -> "#{status}: #{value}" end)
+  |> Enum.join(", ")
+  
+  case status_counts do
+    "" -> "HTTP Responses: No data"
+    counts -> "HTTP Response Status Codes: #{counts}"
+  end
+end
+
+defp format_metrics_data(label, _data), do: "#{label}: Available but not parsed"
+
+
+
 
   #########################
   #   LOGS HANDLERS       #
@@ -292,15 +458,11 @@ defmodule FullstackChallengeWeb.DashboardLive do
      |> put_flash(:error, "Log stream error: #{error}")}
   end
 
-  def handle_info({:bot_reply, user_msg, app}, socket) do
-    ai_msg = %{
-      type: :ai,
-      content: generate_bot_reply(user_msg, app, socket),
-      timestamp: timestamp_now()
-    }
-    updated_messages = Map.update(socket.assigns.messages, app, [ai_msg], &(&1 ++ [ai_msg]))
-    {:noreply, assign(socket, messages: updated_messages, is_typing: false)}
-  end
+ def handle_info({:bot_reply, ai_msg, app_id}, socket) do
+  updated_messages = Map.update(socket.assigns.messages, app_id, [ai_msg], &(&1 ++ [ai_msg]))
+  {:noreply, assign(socket, messages: updated_messages, is_typing: false)}
+end
+
 
   #########################
   #   ASYNC HELPERS       #
@@ -936,6 +1098,130 @@ end
     t = Time.utc_now()
     "#{pad2(t.hour)}:#{pad2(t.minute)}"
   end
+
+defp openrouter_chat_api(app_context, message_history) do
+  api_key = System.get_env("OPENROUTER_API_KEY")
+  
+  if is_nil(api_key) or String.trim(api_key) == "" do
+    Logger.error("[Chat Debug] OPENROUTER_API_KEY not set")
+    {:error, "API key not configured"}
+  else
+    model = "openai/gpt-oss-20b:free"  # More reliable model
+    
+    # Build system message with comprehensive app context
+    system_message = build_system_message(app_context)
+    
+    # Convert message history to OpenAI format
+    api_messages = [
+      %{role: "system", content: system_message}
+    ] ++ convert_messages_to_api_format(message_history)
+    
+    body = %{
+      model: model,
+      messages: api_messages,
+      max_tokens: 500,
+      temperature: 0.7
+    } |> Jason.encode!()
+    
+    headers = [
+      {"Authorization", "Bearer #{api_key}"},
+      {"Content-Type", "application/json"},
+      {"HTTP-Referer", "https://yourapp.com"},
+      {"X-Title", "Fly.io Monitoring Assistant"}
+    ]
+    
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    
+    Logger.info("[Chat Debug] Making API call to OpenRouter with #{length(api_messages)} messages")
+    
+    case HTTPoison.post(url, body, headers, recv_timeout: 30_000, timeout: 30_000) do
+      {:ok, %HTTPoison.Response{status_code: 200, body: resp_body}} ->
+        Logger.info("[Chat Debug] Response received from OpenRouter")
+        case Jason.decode(resp_body) do
+          {:ok, %{"choices" => [%{"message" => %{"content" => reply}} | _]}} ->
+            Logger.info("[Chat Debug] Successfully parsed AI response")
+            {:ok, reply}
+          {:ok, %{"error" => error_info}} ->
+            Logger.error("[Chat Debug] OpenRouter API error: #{inspect(error_info)}")
+            {:error, "API error: #{error_info["message"] || "Unknown error"}"}
+          {:ok, unexpected} ->
+            Logger.error("[Chat Debug] Unexpected response format: #{inspect(unexpected)}")
+            {:error, "Unexpected response format"}
+          {:error, json_error} ->
+            Logger.error("[Chat Debug] JSON parse error: #{inspect(json_error)}")
+            {:error, "Response parsing failed"}
+        end
+      
+      {:ok, %HTTPoison.Response{status_code: 401}} ->
+        Logger.error("[Chat Debug] Authentication failed - check API key")
+        {:error, "Authentication failed - please check API key"}
+      
+      {:ok, %HTTPoison.Response{status_code: status_code, body: resp_body}} ->
+        Logger.error("[Chat Debug] HTTP error #{status_code}: #{resp_body}")
+        {:error, "API returned error #{status_code}"}
+      
+      {:error, %HTTPoison.Error{reason: :timeout}} ->
+        Logger.error("[Chat Debug] Request timeout")
+        {:error, "Request timeout - please try again"}
+      
+      {:error, %HTTPoison.Error{reason: reason}} ->
+        Logger.error("[Chat Debug] HTTP client error: #{inspect(reason)}")
+        {:error, "Network error: #{inspect(reason)}"}
+      
+      other ->
+        Logger.error("[Chat Debug] Unexpected response: #{inspect(other)}")
+        {:error, "Unexpected error occurred"}
+    end
+  end
+end
+
+# Build comprehensive system message for AI
+defp build_system_message(app_context) do
+  app = app_context.app
+  
+  """
+  You are an AI monitoring assistant for Fly.io applications. You help developers understand their app's health, performance, and issues.
+
+  CURRENT APP CONTEXT:
+  - App Name: #{app.name}
+  - App ID: #{app.id}  
+  - Status: #{app.status}
+  - Type: #{app.type}
+  - Region: #{app.region || "unknown"}
+  - Created: #{app.created_at || "unknown"}
+
+  METRICS DATA:
+  #{app_context.metrics}
+
+  LOG DATA:
+  #{app_context.logs}
+
+  INSTRUCTIONS:
+  - Provide helpful, technical insights about the app's health and performance
+  - Answer questions about metrics, logs, status, and deployment issues
+  - Suggest troubleshooting steps when problems are detected
+  - Be concise but informative
+  - Use the actual data provided above in your responses
+  - If metrics show issues (high CPU/memory, errors), proactively mention them
+  - Format responses clearly with markdown when helpful
+
+  Current timestamp: #{app_context.timestamp}
+  """
+end
+
+# Convert internal message format to OpenAI API format
+defp convert_messages_to_api_format(messages) do
+  messages
+  |> Enum.map(fn msg ->
+    role = case msg.type do
+      :user -> "user"
+      :ai -> "assistant"
+      _ -> "user"
+    end
+    %{role: role, content: msg.content}
+  end)
+end
+
 
   defp pad2(n) when is_integer(n), do: if(n < 10, do: "0#{n}", else: "#{n}")
 end
