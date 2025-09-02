@@ -43,6 +43,10 @@ defmodule FullstackChallengeWeb.DashboardLive do
        |> assign(:messages, discord_demo_messages)
        |> assign(:typing_message, "")
        |> assign(:is_typing, false)
+       # New log-related assigns
+       |> assign(:logs, %{}) # %{app_id => [log_entries]}
+       |> assign(:logs_loading, false)
+       |> assign(:log_streams, %{}) # Track active log streams per app
        |> load_apps()}
     else
       {:ok, push_navigate(socket, to: ~p"/auth")}
@@ -55,19 +59,23 @@ defmodule FullstackChallengeWeb.DashboardLive do
   def handle_event("load_apps", _, socket) do
     {:noreply, socket |> assign(:loading, true) |> load_apps()}
   end
+  
   def handle_event("show_launch_modal", _, socket) do
     {:noreply,
      socket
      |> assign(:show_launch_modal, true)
      |> assign(:launch_form, to_form(%{"name" => ""}, as: :launch))}
   end
+  
   def handle_event("hide_launch_modal", _, socket) do
     {:noreply, assign(socket, :show_launch_modal, false)}
   end
+  
   def handle_event("validate_launch", %{"launch" => params}, socket) do
     form = to_form(params, as: :launch)
     {:noreply, assign(socket, :launch_form, form)}
   end
+  
   def handle_event("launch_app", %{"launch" => %{"name" => name}}, socket) do
     case launch_app(socket.assigns.fly_token, name) do
       {:ok, _result} ->
@@ -82,18 +90,21 @@ defmodule FullstackChallengeWeb.DashboardLive do
          |> put_flash(:error, "Failed to launch app: #{reason}")}
     end
   end
+  
   def handle_event("show_destroy_modal", %{"app" => app_name}, socket) do
     {:noreply,
      socket
      |> assign(:show_destroy_modal, true)
      |> assign(:destroy_app, app_name)}
   end
+  
   def handle_event("hide_destroy_modal", _, socket) do
     {:noreply,
      socket
      |> assign(:show_destroy_modal, false)
      |> assign(:destroy_app, nil)}
   end
+  
   def handle_event("destroy_app", _, socket) do
     app_name = socket.assigns.destroy_app
     Logger.info("Starting destroy for app: #{app_name}")
@@ -119,29 +130,29 @@ defmodule FullstackChallengeWeb.DashboardLive do
   #########################################
   #  DISCORD-STYLE SIDEBAR/CHAT HANDLERS  #
   #########################################
-def handle_event("select_app", %{"app" => app_id}, socket) do
-  # Fetch fresh metrics for the selected app only
-  selected_app = app_id
-  apps = socket.assigns.apps
-  app = Enum.find(apps, &(&1.id == selected_app))
+  def handle_event("select_app", %{"app" => app_id}, socket) do
+    # Fetch fresh metrics for the selected app only
+    selected_app = app_id
+    apps = socket.assigns.apps
+    app = Enum.find(apps, &(&1.id == selected_app))
 
-  app_metrics =
-    Map.put(
-      socket.assigns.app_metrics || %{},
-      selected_app,
-      if(app, do: FullstackChallenge.FlyMetrics.fetch_for_app(app.name), else: [])
-    )
+    app_metrics =
+      Map.put(
+        socket.assigns.app_metrics || %{},
+        selected_app,
+        if(app, do: FullstackChallenge.FlyMetrics.fetch_for_app(app.name), else: [])
+      )
 
-  {:noreply,
-   socket
-   |> assign(:selected_app, selected_app)
-   |> assign(:app_metrics, app_metrics)}
-end
-
+    {:noreply,
+     socket
+     |> assign(:selected_app, selected_app)
+     |> assign(:app_metrics, app_metrics)}
+  end
 
   def handle_event("update_typing", %{"typing_message" => val}, socket) do
     {:noreply, assign(socket, typing_message: val)}
   end
+  
   def handle_event("send_message", _params, socket) do
     app = socket.assigns.selected_app
     msg = (socket.assigns.typing_message || "") |> String.trim()
@@ -161,6 +172,89 @@ end
       {:noreply, socket}
     end
   end
+
+  #########################
+  #   NEW LOGS HANDLERS   #
+  #########################
+  def handle_event("start_log_stream", _, socket) do
+    app_id = socket.assigns.selected_app
+    
+    if app_id && !Map.get(socket.assigns.log_streams, app_id) do
+      app = Enum.find(socket.assigns.apps, &(&1.id == app_id))
+      
+      if app do
+        # Start the log streaming process
+        {:ok, stream_pid} = start_log_stream(socket.assigns.fly_token, app.name, self(), app_id)
+        
+        log_streams = Map.put(socket.assigns.log_streams, app_id, stream_pid)
+        
+        {:noreply, 
+         socket
+         |> assign(:log_streams, log_streams)
+         |> assign(:logs_loading, true)}
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("stop_log_stream", _, socket) do
+    app_id = socket.assigns.selected_app
+    
+    if app_id && Map.get(socket.assigns.log_streams, app_id) do
+      stream_pid = socket.assigns.log_streams[app_id]
+      Process.exit(stream_pid, :normal)
+      
+      log_streams = Map.delete(socket.assigns.log_streams, app_id)
+      
+      {:noreply, 
+       socket
+       |> assign(:log_streams, log_streams)
+       |> assign(:logs_loading, false)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("clear_logs", _, socket) do
+    app_id = socket.assigns.selected_app
+    logs = if app_id, do: Map.put(socket.assigns.logs, app_id, []), else: socket.assigns.logs
+    {:noreply, assign(socket, :logs, logs)}
+  end
+
+  # Handle incoming log messages from the CLI stream process
+  def handle_info({:log_entry, app_id, log_entry}, socket) do
+    current_logs = Map.get(socket.assigns.logs, app_id, [])
+    # Keep only the last 1000 log entries to prevent memory issues
+    updated_logs = (current_logs ++ [log_entry]) |> Enum.take(-1000)
+    
+    logs = Map.put(socket.assigns.logs, app_id, updated_logs)
+    
+    {:noreply, 
+     socket
+     |> assign(:logs, logs)
+     |> assign(:logs_loading, false)}
+  end
+
+  def handle_info({:log_stream_started, app_id}, socket) do
+    Logger.info("Log stream started successfully for app: #{app_id}")
+    {:noreply, assign(socket, :logs_loading, false)}
+  end
+
+  def handle_info({:log_stream_error, app_id, error}, socket) do
+    Logger.warning("Log stream error for app #{app_id}: #{error}")
+    
+    log_streams = Map.delete(socket.assigns.log_streams, app_id)
+    
+    {:noreply,
+     socket
+     |> assign(:log_streams, log_streams)
+     |> assign(:logs_loading, false)
+     |> put_flash(:error, "Log stream error: #{error}")}
+  end
+
   def handle_info({:bot_reply, user_msg, app}, socket) do
     ai_msg = %{
       type: :ai,
@@ -170,6 +264,136 @@ end
     updated_messages = Map.update(socket.assigns.messages, app, [ai_msg], &(&1 ++ [ai_msg]))
     {:noreply, assign(socket, messages: updated_messages, is_typing: false)}
   end
+
+  #########################
+  #   LOG STREAMING IMPL  #
+  #########################
+  defp start_log_stream(token, app_name, parent_pid, app_id) do
+    pid = spawn_link(fn -> 
+      stream_logs_via_cli(token, app_name, parent_pid, app_id)
+    end)
+    {:ok, pid}
+  end
+
+  defp stream_logs_via_cli(token, app_name, parent_pid, app_id) do
+    Logger.info("Starting log stream via CLI for app: #{app_name}")
+    
+    # Set environment variable for fly CLI authentication
+    env = [{"FLY_API_TOKEN", token}]
+    
+    # Use fly logs command with JSON output and follow flag
+    cmd_args = ["logs", "--app", app_name, "--json"]
+    Logger.info("fly path: #{inspect(System.find_executable("fly"))}")
+    Logger.info("cmd_args: #{inspect(cmd_args)}")
+    Logger.info("env: #{inspect(env)}")
+
+    try do
+      port = Port.open(
+        {:spawn_executable, System.find_executable("fly")},
+        [
+          :binary,
+          :exit_status,
+          {:args, cmd_args},
+         
+          
+        ]
+      )
+      
+      send(parent_pid, {:log_stream_started, app_id})
+      receive_cli_logs(parent_pid, app_id, port)
+      
+    rescue
+      error ->
+        Logger.error("Failed to start fly logs command: #{inspect(error)}")
+        send(parent_pid, {:log_stream_error, app_id, "CLI command failed: #{inspect(error)}"})
+    end
+  end
+
+  defp receive_cli_logs(parent_pid, app_id, port) do
+  receive do
+    {^port, {:data, {:eol, line}}} ->
+      handle_log_line(line, parent_pid, app_id)
+      receive_cli_logs(parent_pid, app_id, port)
+
+    {^port, {:data, {:noeol, partial_line}}} ->
+      # Optionally buffer partial_line if needed
+      receive_cli_logs(parent_pid, app_id, port)
+
+    {^port, {:data, line}} when is_binary(line) ->
+      # New: Log lines as raw binary data
+      handle_log_line(line, parent_pid, app_id)
+      receive_cli_logs(parent_pid, app_id, port)
+
+    {^port, {:exit_status, status}} ->
+      Logger.info("Fly logs command exited with status: #{status}")
+      send(parent_pid, {:log_stream_error, app_id, "Command exited with status #{status}"})
+
+    other ->
+      Logger.debug("Unexpected message from fly logs: #{inspect(other)}")
+      receive_cli_logs(parent_pid, app_id, port)
+  after
+    60_000 ->
+      Logger.info("Log stream timeout for app_id: #{app_id}")
+      Port.close(port)
+      send(parent_pid, {:log_stream_error, app_id, "Stream timeout"})
+  end
+end
+
+defp handle_log_line(line, parent_pid, app_id) do
+  case parse_fly_log_line(line) do
+    {:ok, log_entry} ->
+      send(parent_pid, {:log_entry, app_id, log_entry})
+
+    {:error, _reason} ->
+      # Send raw if parsing fails
+      log_entry = %{
+        timestamp: timestamp_now(),
+        level: "info",
+        message: String.trim(line),
+        instance: nil,
+        raw: line
+      }
+      send(parent_pid, {:log_entry, app_id, log_entry})
+  end
+end
+
+
+  # Parse fly CLI JSON log output
+  defp parse_fly_log_line(line) do
+    try do
+      case Jason.decode(String.trim(line)) do
+        {:ok, %{"timestamp" => timestamp, "message" => message} = json} ->
+          {:ok, %{
+            timestamp: format_fly_timestamp(timestamp),
+            level: Map.get(json, "level", "info"),
+            message: message,
+            instance: Map.get(json, "instance"),
+            region: Map.get(json, "region"),
+            raw: line
+          }}
+        {:ok, _json} ->
+          # Fallback for unexpected JSON structure
+          {:error, "unexpected_json_structure"}
+        {:error, _} ->
+          {:error, "invalid_json"}
+      end
+    rescue
+      _ -> 
+        {:error, "parse_error"}
+    end
+  end
+
+  defp format_fly_timestamp(timestamp) when is_binary(timestamp) do
+    case DateTime.from_iso8601(timestamp) do
+      {:ok, dt, _} -> 
+        dt
+        |> DateTime.shift_zone!("Etc/UTC")
+        |> Calendar.strftime("%H:%M:%S")
+      _ -> 
+        timestamp_now()
+    end
+  end
+  defp format_fly_timestamp(_), do: timestamp_now()
 
   defp generate_bot_reply(user_msg, app, socket) do
     msg = String.downcase(user_msg)
@@ -187,44 +411,42 @@ end
       msg =~ "slow" or msg =~ "performance" ->
         "📊 Current response time for #{app}: *randomly* fine!"
       true ->
-        "Hey! I’m monitoring **#{app}**. Try commands like `health`, `error`, `slow`."
+        "Hey! I'm monitoring **#{app}**. Try commands like `health`, `error`, `slow`."
     end
   end
 
   #########################
   #     FLY.IO HELPERS    #
   #########################
-defp load_apps(socket) do
-  case list_apps(socket.assigns.fly_token) do
-    {:ok, apps} ->
-      # force id to string for all apps in case
-      apps = Enum.map(apps, fn app -> %{app | id: to_string(app.id)} end)
-      app_metrics =
-        for app <- apps, into: %{} do
-          {app.id, FullstackChallenge.FlyMetrics.fetch_for_app(app.name)}
-        end
-      real_ids = Enum.map(apps, & &1.id)
-      selected_app =
-        if socket.assigns.selected_app in real_ids do
-          socket.assigns.selected_app
-        else
-          List.first(real_ids)
-        end
+  defp load_apps(socket) do
+    case list_apps(socket.assigns.fly_token) do
+      {:ok, apps} ->
+        # force id to string for all apps in case
+        apps = Enum.map(apps, fn app -> %{app | id: to_string(app.id)} end)
+        app_metrics =
+          for app <- apps, into: %{} do
+            {app.id, FullstackChallenge.FlyMetrics.fetch_for_app(app.name)}
+          end
+        real_ids = Enum.map(apps, & &1.id)
+        selected_app =
+          if socket.assigns.selected_app in real_ids do
+            socket.assigns.selected_app
+          else
+            List.first(real_ids)
+          end
 
-      socket
-      |> assign(:apps, apps)
-      |> assign(:app_metrics, app_metrics)
-      |> assign(:selected_app, selected_app)
-      |> assign(:loading, false)
-      |> assign(:error, nil)
-    {:error, reason} ->
-      socket
-      |> assign(:loading, false)
-      |> assign(:error, "Failed to load apps: #{reason}")
+        socket
+        |> assign(:apps, apps)
+        |> assign(:app_metrics, app_metrics)
+        |> assign(:selected_app, selected_app)
+        |> assign(:loading, false)
+        |> assign(:error, nil)
+      {:error, reason} ->
+        socket
+        |> assign(:loading, false)
+        |> assign(:error, "Failed to load apps: #{reason}")
+    end
   end
-end
-
-
 
   defp list_apps(token) do
     if not valid_token_format?(token) do
@@ -253,6 +475,7 @@ end
         {:error, "Network error"}
     end
   end
+
   defp launch_app(token, name) do
     Logger.info("Attempting to launch app: #{name}")
     case get_user_organization(token) do
@@ -280,6 +503,7 @@ end
         {:error, "Failed to get organization: #{reason}"}
     end
   end
+
   defp create_app(token, name, org_id) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
     mutation = %{
@@ -321,6 +545,7 @@ end
         {:error, "Network error"}
     end
   end
+
   defp allocate_ip_addresses(token, app_name) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
     ipv4_mutation = %{
@@ -364,6 +589,7 @@ end
         {:error, "Network error"}
     end
   end
+
   defp allocate_ipv6(token, app_name) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
     ipv6_mutation = %{
@@ -400,6 +626,7 @@ end
         {:ok, nil}
     end
   end
+
   defp deploy_nginx_app(token, app_name) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
     template = FullstackChallenge.AppTemplates.nginx_app_template(app_name)
@@ -457,6 +684,7 @@ end
         {:error, "Network error"}
     end
   end
+
   defp get_user_organization(token) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
     query = %{
@@ -491,6 +719,7 @@ end
         {:error, "Network error"}
     end
   end
+
   defp destroy_app(token, app_name) do
     headers = [{"Authorization", "Bearer #{token}"}, {"Content-Type", "application/json"}]
     Logger.info(
@@ -535,28 +764,29 @@ end
         {:error, "Network error"}
     end
   end
-defp parse_apps_response(%{"errors" => errors}) when is_list(errors) do
-  Logger.warning("GraphQL errors in parse_apps_response: #{inspect(errors)}")
-  []
-end
-defp parse_apps_response(%{"data" => %{"apps" => %{"nodes" => apps}}}) when is_list(apps) do
-  Enum.map(apps, fn app ->
-    %{
-      id: Map.get(app, "id", Map.get(app, "name", "unknown")),
-      name: Map.get(app, "name", "unknown"),
-      status: Map.get(app, "status", "running"),
-      region: Map.get(app["organization"], "slug", "unknown"),
-      created_at: Map.get(app, "createdAt", "unknown"),
-      type: "web"    # <--- This line is NEW; set as needed ("web", "api", "worker", etc.)
-    }
-  end)
-end
 
+  defp parse_apps_response(%{"errors" => errors}) when is_list(errors) do
+    Logger.warning("GraphQL errors in parse_apps_response: #{inspect(errors)}")
+    []
+  end
+  defp parse_apps_response(%{"data" => %{"apps" => %{"nodes" => apps}}}) when is_list(apps) do
+    Enum.map(apps, fn app ->
+      %{
+        id: Map.get(app, "id", Map.get(app, "name", "unknown")),
+        name: Map.get(app, "name", "unknown"),
+        status: Map.get(app, "status", "running"),
+        region: Map.get(app["organization"], "slug", "unknown"),
+        created_at: Map.get(app, "createdAt", "unknown"),
+        type: "web"    # <--- This line is NEW; set as needed ("web", "api", "worker", etc.)
+      }
+    end)
+  end
 
   defp valid_token_format?(token) when is_binary(token) do
     String.starts_with?(token, "FlyV1") and String.length(token) > 50
   end
   defp valid_token_format?(_), do: false
+  
   defp get_token_from_session(session) do
     case Map.get(session, "auth_token_ref") do
       ref when is_binary(ref) ->
@@ -572,6 +802,7 @@ end
         try_fallback_methods(session)
     end
   end
+  
   defp try_fallback_methods(session) do
     case FullstackChallenge.TokenSecurity.decrypt_token(Map.get(session, "encrypted_fly_token")) do
       {:ok, token} -> 
@@ -585,6 +816,7 @@ end
         end
     end
   end
+  
   defp generate_session_id do
     :crypto.strong_rand_bytes(16) |> Base.url_encode64(padding: false)
   end
@@ -596,15 +828,17 @@ end
   defp app_icon("api"), do: "⚡"
   defp app_icon("worker"), do: "⚙️"
   defp app_icon(_), do: "#"
+  
   defp app_status_icon("deployed"), do: "🟢"
   defp app_status_icon("pending"), do: "🟡"
   defp app_status_icon("suspended"), do: "🔴"
   defp app_status_icon(_), do: "⚪"
-defp timestamp_now do
-  t = Time.utc_now()
-  "#{pad2(t.hour)}:#{pad2(t.minute)}"
-end
 
-defp pad2(n) when is_integer(n), do: if(n < 10, do: "0#{n}", else: "#{n}")
+  defp timestamp_now do
+    t = Time.utc_now()
+    "#{pad2(t.hour)}:#{pad2(t.minute)}"
+  end
+
+  defp pad2(n) when is_integer(n), do: if(n < 10, do: "0#{n}", else: "#{n}")
 
 end

@@ -96,6 +96,7 @@
           </div>
         <% end %>
       </div>
+      
       <!-- Live Metrics Panel -->
       <%= if @selected_app && @app_metrics[@selected_app] do %>
         <%
@@ -166,6 +167,87 @@
           <div class="text-xs text-gray-500 italic">No metrics available yet.</div>
         </div>
       <% end %>
+
+      <!-- Live Logs Panel -->
+      <%= if @selected_app do %>
+        <div class="mt-4 mx-2 flex-1 flex flex-col min-h-0 bg-gray-800 rounded">
+          <!-- Logs Header -->
+          <div class="p-3 border-b border-gray-700">
+            <div class="flex items-center justify-between">
+              <div class="text-xs text-gray-400 font-semibold uppercase tracking-wide">LIVE LOGS</div>
+              <div class="flex items-center space-x-1">
+                <%= if Map.get(@log_streams, @selected_app) do %>
+                  <button
+                    phx-click="stop_log_stream"
+                    class="px-2 py-0.5 bg-red-600 hover:bg-red-700 text-white text-xs rounded transition-colors"
+                    title="Stop log stream"
+                  >
+                    ⏹️
+                  </button>
+                <% else %>
+                  <button
+                    phx-click="start_log_stream"
+                    class="px-2 py-0.5 bg-green-600 hover:bg-green-700 text-white text-xs rounded transition-colors"
+                    title="Start log stream (requires fly CLI)"
+                  >
+                    ▶️
+                  </button>
+                <% end %>
+                <button
+                  phx-click="clear_logs"
+                  class="px-2 py-0.5 bg-gray-600 hover:bg-gray-500 text-white text-xs rounded transition-colors"
+                  title="Clear logs"
+                >
+                  🗑️
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Logs Content -->
+          <div class="flex-1 overflow-y-auto p-2 font-mono text-xs min-h-0">
+            <%= if @logs_loading do %>
+              <div class="flex items-center justify-center h-full">
+                <div class="text-gray-500 text-center">
+                  <div class="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-500 mx-auto mb-2"></div>
+                  <div class="text-xs">Connecting...</div>
+                </div>
+              </div>
+            <% else %>
+              <%= if Map.get(@logs, @selected_app) && length(Map.get(@logs, @selected_app, [])) > 0 do %>
+                <%= for log <- Enum.take(Map.get(@logs, @selected_app, []), -5) do %>
+                  <div class="mb-1 flex text-xs">
+                    <span class="text-gray-500 w-16 flex-shrink-0 mr-2"><%= log.timestamp %></span>
+                    <span class={"w-8 flex-shrink-0 font-semibold mr-2 " <>
+                      case log.level do
+                        "error" -> "text-red-400"
+                        "warn" -> "text-yellow-400"
+                        "info" -> "text-blue-400"
+                        "debug" -> "text-gray-400"
+                        _ -> "text-gray-300"
+                      end
+                    }><%= String.upcase(String.slice(log.level, 0, 3)) %></span>
+                    <span class="text-gray-100 flex-1 break-all leading-tight"><%= String.slice(log.message, 0, 100) %><%= if String.length(log.message) > 100, do: "..." %></span>
+                  </div>
+                <% end %>
+                <%= if length(Map.get(@logs, @selected_app, [])) > 5 do %>
+                  <div class="text-gray-500 text-center text-xs py-1">
+                    ... showing last 5 entries (total: <%= length(Map.get(@logs, @selected_app, [])) %>)
+                  </div>
+                <% end %>
+              <% else %>
+                <div class="text-gray-500 text-center mt-4 text-xs">
+                  <%= if Map.get(@log_streams, @selected_app) do %>
+                    Waiting for logs...
+                  <% else %>
+                    Click ▶️ to start streaming logs
+                  <% end %>
+                </div>
+              <% end %>
+            <% end %>
+          </div>
+        </div>
+      <% end %>
     </div>
 
     <!-- User Area (bottom) -->
@@ -220,7 +302,7 @@
       </div>
     </div>
 
-    <!-- Messages -->
+    <!-- Chat Messages -->
     <div class="flex-1 overflow-y-auto p-4 space-y-4">
       <%= for msg <- @messages[@selected_app] || [] do %>
         <div class="flex space-x-3">
