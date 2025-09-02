@@ -283,9 +283,11 @@ defmodule FullstackChallengeWeb.DashboardLive do
     
     # Use fly logs command with JSON output and follow flag
     cmd_args = ["logs", "--app", app_name, "--json"]
-    Logger.info("fly path: #{inspect(System.find_executable("fly"))}")
-    Logger.info("cmd_args: #{inspect(cmd_args)}")
-    Logger.info("env: #{inspect(env)}")
+
+    # debug info
+    # Logger.info("fly path: #{inspect(System.find_executable("fly"))}") 
+    # Logger.info("cmd_args: #{inspect(cmd_args)}")
+    # Logger.info("env: #{inspect(env)}")
 
     try do
       port = Port.open(
