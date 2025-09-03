@@ -46,6 +46,8 @@ defmodule FullstackChallengeWeb.DashboardLive do
        |> assign(:messages, discord_demo_messages)
        |> assign(:typing_message, "")
        |> assign(:is_typing, false)
+       |> assign(:app_search_query, "")
+       |> assign(:filtered_apps, [])
        |> assign(:logs, %{})
        |> assign(:logs_loading, false)
        |> assign(:log_streams, %{})
@@ -128,7 +130,38 @@ defmodule FullstackChallengeWeb.DashboardLive do
          |> put_flash(:error, "Failed to destroy app: #{reason}")}
     end
   end
+  
+  def handle_event("update_app_search", %{"search" => %{"query" => query}}, socket) do
+    filtered_apps = filter_apps(socket.assigns.apps, query)
+    
+    {:noreply, 
+    socket
+    |> assign(:app_search_query, query)
+    |> assign(:filtered_apps, filtered_apps)}
+  end
 
+  def handle_event("clear_app_search", _, socket) do
+    {:noreply, 
+    socket
+    |> assign(:app_search_query, "")
+    |> assign(:filtered_apps, socket.assigns.apps)}
+  end
+
+  # Add the filtering function:
+
+  defp filter_apps(apps, query) when is_binary(query) do
+    if String.trim(query) == "" do
+      apps
+    else
+      query_lower = String.downcase(String.trim(query))
+      Enum.filter(apps, fn app ->
+        app.name |> String.downcase() |> String.contains?(query_lower) ||
+        app.id |> String.downcase() |> String.contains?(query_lower)
+      end)
+    end
+  end
+
+  defp filter_apps(apps, _), do: apps 
   #########################################
   #  OPTIMIZED APP SELECTION HANDLERS    #
   #########################################
@@ -217,6 +250,55 @@ def handle_event("send_message", _params, socket) do
     end
   end
 end
+
+  #########################
+  #   LOGS HANDLERS       #
+  #########################
+  def handle_event("start_log_stream", _, socket) do
+    app_id = socket.assigns.selected_app
+
+    if app_id && !Map.get(socket.assigns.log_streams, app_id) do
+      app = Enum.find(socket.assigns.apps, &(&1.id == app_id))
+
+      if app do
+        {:ok, stream_pid} = start_log_stream(socket.assigns.fly_token, app.name, self(), app_id)
+        log_streams = Map.put(socket.assigns.log_streams, app_id, stream_pid)
+
+        {:noreply,
+         socket
+         |> assign(:log_streams, log_streams)
+         |> assign(:logs_loading, true)}
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("stop_log_stream", _, socket) do
+    app_id = socket.assigns.selected_app
+
+    if app_id && Map.get(socket.assigns.log_streams, app_id) do
+      stream_pid = socket.assigns.log_streams[app_id]
+      Process.exit(stream_pid, :normal)
+
+      log_streams = Map.delete(socket.assigns.log_streams, app_id)
+
+      {:noreply,
+       socket
+       |> assign(:log_streams, log_streams)
+       |> assign(:logs_loading, false)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_event("clear_logs", _, socket) do
+    app_id = socket.assigns.selected_app
+    logs = if app_id, do: Map.put(socket.assigns.logs, app_id, []), else: socket.assigns.logs
+    {:noreply, assign(socket, :logs, logs)}
+  end
 
 # Build comprehensive app context for AI
 defp build_app_context(app, metrics, logs) do
@@ -332,54 +414,7 @@ defp format_metrics_data(label, _data), do: "#{label}: Available but not parsed"
 
 
 
-  #########################
-  #   LOGS HANDLERS       #
-  #########################
-  def handle_event("start_log_stream", _, socket) do
-    app_id = socket.assigns.selected_app
 
-    if app_id && !Map.get(socket.assigns.log_streams, app_id) do
-      app = Enum.find(socket.assigns.apps, &(&1.id == app_id))
-
-      if app do
-        {:ok, stream_pid} = start_log_stream(socket.assigns.fly_token, app.name, self(), app_id)
-        log_streams = Map.put(socket.assigns.log_streams, app_id, stream_pid)
-
-        {:noreply,
-         socket
-         |> assign(:log_streams, log_streams)
-         |> assign(:logs_loading, true)}
-      else
-        {:noreply, socket}
-      end
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("stop_log_stream", _, socket) do
-    app_id = socket.assigns.selected_app
-
-    if app_id && Map.get(socket.assigns.log_streams, app_id) do
-      stream_pid = socket.assigns.log_streams[app_id]
-      Process.exit(stream_pid, :normal)
-
-      log_streams = Map.delete(socket.assigns.log_streams, app_id)
-
-      {:noreply,
-       socket
-       |> assign(:log_streams, log_streams)
-       |> assign(:logs_loading, false)}
-    else
-      {:noreply, socket}
-    end
-  end
-
-  def handle_event("clear_logs", _, socket) do
-    app_id = socket.assigns.selected_app
-    logs = if app_id, do: Map.put(socket.assigns.logs, app_id, []), else: socket.assigns.logs
-    {:noreply, assign(socket, :logs, logs)}
-  end
 
   #########################
   #   ASYNC TASK HANDLERS #
@@ -664,6 +699,7 @@ end
         socket =
           socket
           |> assign(:apps, apps)
+          |> assign(:filtered_apps, apps)  # Initialize filtered apps
           |> assign(:app_metrics, %{})
           |> assign(:selected_app, selected_app)
           |> assign(:loading, false)
@@ -679,6 +715,7 @@ end
       {:error, reason} ->
         socket
         |> assign(:loading, false)
+        |> assign(:filtered_apps, [])  # Also initialize on error
         |> assign(:error, "Failed to load apps: #{reason}")
     end
   end
