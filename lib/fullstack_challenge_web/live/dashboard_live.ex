@@ -696,12 +696,25 @@ end
             List.first(real_ids)
           end
 
+# Add welcome message to first app if there are apps
+        updated_messages = if selected_app do
+          welcome_msg = %{
+            type: :ai,
+            content: "Welcome to your Fly.io monitoring dashboard! I'm your AI assistant ready to help with app performance, metrics, and troubleshooting. Ask me about CPU usage, memory, logs, or any issues you're experiencing.",
+            timestamp: timestamp_now()
+          }
+          Map.put(socket.assigns.messages, selected_app, [welcome_msg])
+        else
+          socket.assigns.messages
+        end
+
         socket =
           socket
           |> assign(:apps, apps)
           |> assign(:filtered_apps, apps)  # Initialize filtered apps
           |> assign(:app_metrics, %{})
           |> assign(:selected_app, selected_app)
+          |> assign(:messages, updated_messages)
           |> assign(:loading, false)
           |> assign(:error, nil)
 

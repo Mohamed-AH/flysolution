@@ -403,7 +403,34 @@
 
 <!-- Chat Messages -->
 <div class="flex-1 overflow-y-auto p-4 space-y-4" id="chat-messages">
-  <%= if @selected_app do %>
+  <%= cond do %>
+    <% length(@apps) == 0 and not @loading -> %>
+      <!-- No apps available -->
+      <div class="flex items-center justify-center h-full">
+        <div class="text-center text-gray-400 max-w-md">
+          <div class="text-6xl mb-4">📱</div>
+          <h2 class="text-xl font-semibold text-white mb-2">No Apps Found</h2>
+          <p class="text-gray-300 mb-4">You don't have any apps deployed yet. Launch your first app to start monitoring with AI assistance.</p>
+          <button
+            phx-click="show_launch_modal"
+            class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-md transition-colors"
+          >
+            Launch Your First App
+          </button>
+        </div>
+      </div>
+    
+    <% @loading -> %>
+      <!-- Loading state -->
+      <div class="flex items-center justify-center h-full">
+        <div class="text-center text-gray-400">
+          <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+          <p class="text-lg">Loading your apps...</p>
+        </div>
+      </div>
+    
+    <% @selected_app -> %>
+      <!-- Show messages for selected app -->
     <%= for msg <- (@messages[@selected_app] || []) do %>
       <div class="flex space-x-3">
         <!-- Avatar -->
@@ -447,14 +474,20 @@
         </div>
       </div>
     <% end %>
-  <% else %>
-    <div class="flex items-center justify-center h-full">
-      <div class="text-center text-gray-400">
-        <div class="text-6xl mb-4">💬</div>
-        <p class="text-lg">Select an app to start chatting</p>
-        <p class="text-sm">Choose an application from the sidebar to begin monitoring</p>
+   <% true -> %>
+      <!-- Fallback: No app selected but apps exist -->
+      <div class="flex items-center justify-center h-full">
+        <div class="text-center text-gray-400 max-w-md">
+          <div class="text-6xl mb-4">🤖</div>
+          <h2 class="text-xl font-semibold text-white mb-2">AI Monitoring Assistant</h2>
+          <p class="text-gray-300 mb-4">Select an app from the sidebar to start chatting about performance, metrics, and health status.</p>
+          <div class="text-sm text-gray-500 space-y-1">
+            <p>• Ask about CPU and memory usage</p>
+            <p>• Check error logs and response times</p>
+            <p>• Get deployment and troubleshooting help</p>
+          </div>
+        </div>
       </div>
-    </div>
   <% end %>
 </div>
 
